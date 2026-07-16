@@ -6,3 +6,5 @@ terraform.tfvars
 __pycache__/
 *.pyc
 .databricks/
+tfplan
+data_generator/olist/
