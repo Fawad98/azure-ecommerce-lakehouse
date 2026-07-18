@@ -128,3 +128,91 @@ missing resources.
 **Lesson:** Failed cloud operations can leave orphaned state that exists in
 the provider but not in Terraform's state file. When Terraform and reality
 disagree, inspect reality directly with the CLI before changing code.
+
+## 8. Databricks workspace access denied on first login
+
+**Problem:** Opening the workspace URL returned "Unable to view page — you do not
+have permission to access this page in workspace ...", despite owning the
+subscription.
+
+**Diagnosis:** The workspace was created by Terraform using the deployment
+service principal. Navigating directly to the raw `adb-*.azuredatabricks.net`
+URL skips the Azure AD SSO handoff that provisions a user into the workspace on
+first entry.
+
+**Fix:** Launched the workspace from the Azure Portal instead (Databricks
+resource → "Launch Workspace"), which performed the handoff and provisioned the
+account as a workspace admin.
+
+**Lesson:** Resource ownership in Azure and user membership in a Databricks
+workspace are separate concepts. Enter a new workspace through the Portal at
+least once.
+
+## 9. Cluster creation blocked by regional vCPU quota
+
+**Problem:** Cluster creation failed with `AZURE_QUOTA_EXCEEDED_EXCEPTION` —
+"Current Limit: 10, Current Usage: 8, New Limit Required: 12".
+
+**Diagnosis:** The default subscription quota in eastus2 was 10 total regional
+vCPUs, of which 8 were already consumed (all in the Standard BS family). The
+initial cluster config compounded the problem: autoscaling 2–8 workers plus
+Photon requested 36 cores for a workload that needs a fraction of that.
+
+**Fix:** Right-sized the cluster first — single node, no autoscaling, Photon
+disabled, 4-core general-purpose node, 20-minute auto-termination — then
+submitted self-service quota increases for both "Total Regional vCPUs" and the
+relevant family limit.
+
+**Lesson:** Azure enforces quota at both regional and VM-family level; raising
+one without the other still blocks. Equally important: the default cluster form
+is sized for production workloads, not portfolio data — always right-size before
+blaming quota.
+
+## 10. Unity Catalog blocks cluster-level storage credentials
+
+**Problem:** Reading `abfss://` paths failed repeatedly with
+`Invalid configuration value detected for fs.azure.account.key`, and setting
+OAuth credentials in the notebook failed with
+`CONFIG_NOT_AVAILABLE ... SQLSTATE 42K0I`.
+
+**Diagnosis:** The workspace is Unity Catalog-governed and the cluster ran in
+"Auto" access mode, which resolves to a UC-managed mode. In that mode, `fs.azure.*`
+Spark configurations are not merely ignored — they are inaccessible, so neither
+notebook-level `spark.conf.set()` nor cluster-level Spark config had any effect.
+The service-principal-plus-`spark.conf` pattern found in most tutorials only
+works on non-UC or dedicated-access clusters.
+
+**Fix:** Adopted the Unity Catalog-native path instead of fighting it:
+1. Created a Databricks Access Connector (system-assigned managed identity).
+2. Granted that identity **Storage Blob Data Contributor** on the storage account.
+3. Registered a UC **storage credential** referencing the connector.
+4. Created a UC **external location** per container (bronze, silver, gold,
+   quarantine, checkpoints).
+
+Validation reported Read/List/Write/Delete/Path/HNS all successful, with only
+optional "file events" checks failing (they require additional queue and
+EventGrid roles and only affect ingestion performance, so the locations were
+force-created).
+
+**Lesson:** Unity Catalog centralises storage governance by design — credentials
+belong to the metastore, not to clusters or notebooks. When an error says a
+configuration is "not available" rather than "incorrect", the platform is
+telling you the mechanism is disabled, not misconfigured. Recognising that
+distinction early would have saved several hours.
+
+## 11. Secrets repeatedly exposed during troubleshooting
+
+**Problem:** Over the course of debugging, several live credentials (SQL admin
+password, Event Hubs shared access key, service principal client secret) were
+pasted into terminals, chat logs, and screenshots.
+
+**Diagnosis:** Debugging encourages copy-pasting whole commands and outputs, and
+secrets travel with them. Screenshots leak just as effectively as text.
+
+**Fix:** Rotated each exposed credential (`az ad sp credential reset`,
+`az eventhubs ... keys renew`, SQL admin password update) and moved secrets out
+of code into environment variables and Databricks secret scopes.
+
+**Lesson:** Adopt a redaction habit before pasting anything: scan for keys,
+passwords, and connection strings and replace them with placeholders. Error
+messages almost never require the secret itself to diagnose.
