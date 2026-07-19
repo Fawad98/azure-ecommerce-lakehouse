@@ -9,6 +9,6 @@ locals {
   tags = {
     project = var.project
     env     = var.env
-    owner   = "your-name"
+    owner   = "muhammad-fawad"
   }
 }

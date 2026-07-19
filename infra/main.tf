@@ -26,7 +26,7 @@ resource "azurerm_eventhub_namespace" "ehns" {
   name                = "ehns-${local.prefix}"
   location            = var.location
   resource_group_name = azurerm_resource_group.rg.name
-  sku                 = "Basic"             # Basic is enough & cheap
+  sku                 = "Standard"             # Basic is enough & cheap
   capacity            = 1
   tags                = local.tags
 }
@@ -63,7 +63,7 @@ resource "azurerm_key_vault" "kv" {
   resource_group_name = azurerm_resource_group.rg.name
   tenant_id           = data.azurerm_client_config.current.tenant_id
   sku_name            = "standard"
-  enable_rbac_authorization = true
+  rbac_authorization_enabled = true
   tags                = local.tags
 }
 
