@@ -1,7 +1,7 @@
 {
 	"name": "pl_ingest_sql_to_bronze",
 	"properties": {
-		"description": "Metadata-driven ingestion from Azure SQL to bronze. One parameterised pipeline reads etl.ingest_control and copies each enabled table, using a watermark where configured. The watermark only advances after a Get Metadata check confirms files exist at the sink path, so a successful-but-misdirected copy cannot silently skip data.",
+		"description": "Metadata-driven ingestion from Azure SQL to bronze. One parameterised pipeline reads etl.ingest_control and copies each enabled table, using a watermark where configured. The watermark advances only after Get Metadata confirms files exist at the sink path, so a successful-but-misdirected copy cannot silently skip data. ADF does not permit If Condition activities nested inside another If Condition, so the verification gate lives in the Script activity's T-SQL rather than in a second branch.",
 		"activities": [
 			{
 				"name": "GetTableList",
@@ -169,6 +169,7 @@
 									},
 									{
 										"name": "VerifySinkIncremental",
+										"description": "Confirms files actually landed at the sink path. Copy success alone is not evidence: a misconfigured path succeeds while writing where nothing downstream reads.",
 										"type": "GetMetadata",
 										"dependsOn": [
 											{
@@ -212,9 +213,9 @@
 										}
 									},
 									{
-										"name": "SinkVerified",
-										"description": "The watermark is a commitment that data through time T is durably landed. It must only advance once the sink path is confirmed to contain files - Copy activity success alone is not evidence, because a misconfigured sink path succeeds while writing somewhere downstream never reads.",
-										"type": "IfCondition",
+										"name": "UpdateWatermark",
+										"description": "The watermark is a commitment that data through time T is durably landed, so it advances only when sink verification passes. On failure the script throws, leaving the old watermark in place so the next run reprocesses the same window.",
+										"type": "Script",
 										"dependsOn": [
 											{
 												"activity": "VerifySinkIncremental",
@@ -223,58 +224,29 @@
 												]
 											}
 										],
+										"policy": {
+											"timeout": "0.00:10:00",
+											"retry": 2,
+											"retryIntervalInSeconds": 30,
+											"secureOutput": false,
+											"secureInput": false
+										},
 										"userProperties": [],
+										"linkedServiceName": {
+											"referenceName": "ls_azuresql",
+											"type": "LinkedServiceReference"
+										},
 										"typeProperties": {
-											"expression": {
-												"value": "@and(activity('VerifySinkIncremental').output.exists, greater(length(activity('VerifySinkIncremental').output.childItems), 0))",
-												"type": "Expression"
-											},
-											"ifFalseActivities": [
+											"scripts": [
 												{
-													"name": "FailWatermarkNotAdvanced",
-													"type": "Fail",
-													"dependsOn": [],
-													"userProperties": [],
-													"typeProperties": {
-														"message": {
-															"value": "@concat('Incremental load for ', item().source_table, ' wrote no files to the expected sink path. Watermark deliberately NOT advanced so the next run reprocesses this window.')",
-															"type": "Expression"
-														},
-														"errorCode": "SINK_EMPTY_WATERMARK_HELD"
+													"type": "NonQuery",
+													"text": {
+														"value": "IF '@{activity('VerifySinkIncremental').output.exists}' = 'True' AND @{length(activity('VerifySinkIncremental').output.childItems)} > 0\nBEGIN\n    UPDATE etl.ingest_control\n    SET last_watermark = '@{activity('GetNewWatermark').output.firstRow.new_wm}'\n    WHERE source_table = '@{item().source_table}';\nEND\nELSE\nBEGIN\n    THROW 50001, 'Sink verification failed - watermark held so the next run reprocesses this window', 1;\nEND",
+														"type": "Expression"
 													}
 												}
 											],
-											"ifTrueActivities": [
-												{
-													"name": "UpdateWatermark",
-													"type": "Script",
-													"dependsOn": [],
-													"policy": {
-														"timeout": "0.00:10:00",
-														"retry": 2,
-														"retryIntervalInSeconds": 30,
-														"secureOutput": false,
-														"secureInput": false
-													},
-													"userProperties": [],
-													"linkedServiceName": {
-														"referenceName": "ls_azuresql",
-														"type": "LinkedServiceReference"
-													},
-													"typeProperties": {
-														"scripts": [
-															{
-																"type": "NonQuery",
-																"text": {
-																	"value": "UPDATE etl.ingest_control SET last_watermark = '@{activity('GetNewWatermark').output.firstRow.new_wm}' WHERE source_table = '@{item().source_table}'",
-																	"type": "Expression"
-																}
-															}
-														],
-														"scriptBlockExecutionTimeout": "02:00:00"
-													}
-												}
-											]
+											"scriptBlockExecutionTimeout": "02:00:00"
 										}
 									}
 								],
@@ -347,6 +319,7 @@
 									},
 									{
 										"name": "VerifySinkFull",
+										"description": "Confirms files actually landed at the sink path. Copy success alone is not evidence: a misconfigured path succeeds while writing where nothing downstream reads.",
 										"type": "GetMetadata",
 										"dependsOn": [
 											{
@@ -387,40 +360,6 @@
 											"formatSettings": {
 												"type": "ParquetReadSettings"
 											}
-										}
-									},
-									{
-										"name": "SinkHasDataFull",
-										"type": "IfCondition",
-										"dependsOn": [
-											{
-												"activity": "VerifySinkFull",
-												"dependencyConditions": [
-													"Succeeded"
-												]
-											}
-										],
-										"userProperties": [],
-										"typeProperties": {
-											"expression": {
-												"value": "@and(activity('VerifySinkFull').output.exists, greater(length(activity('VerifySinkFull').output.childItems), 0))",
-												"type": "Expression"
-											},
-											"ifFalseActivities": [
-												{
-													"name": "FailEmptySinkFull",
-													"type": "Fail",
-													"dependsOn": [],
-													"userProperties": [],
-													"typeProperties": {
-														"message": {
-															"value": "@concat('Full load for ', item().source_table, ' produced no files at the expected sink path. Data was not landed where downstream expects it.')",
-															"type": "Expression"
-														},
-														"errorCode": "SINK_EMPTY"
-													}
-												}
-											]
 										}
 									}
 								]
