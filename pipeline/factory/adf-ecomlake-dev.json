@@ -1,0 +1,15 @@
+{
+	"name": "adf-ecomlake-dev",
+	"properties": {
+		"trustModeClaimForMi": {
+			"value": "Disabled",
+			"editable": true
+		}
+	},
+	"location": "eastus2",
+	"identity": {
+		"type": "SystemAssigned",
+		"principalId": "2e8c717f-5163-4af9-93da-313568a32ae8",
+		"tenantId": "d4c2d13a-5ceb-4e90-a91e-fbd13623b7f5"
+	}
+}

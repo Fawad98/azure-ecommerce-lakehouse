@@ -1,0 +1,35 @@
+{
+	"name": "ds_sql_control",
+	"properties": {
+		"linkedServiceName": {
+			"referenceName": "ls_azuresql",
+			"type": "LinkedServiceReference"
+		},
+		"annotations": [],
+		"type": "AzureSqlTable",
+		"schema": [
+			{
+				"name": "source_table",
+				"type": "varchar"
+			},
+			{
+				"name": "watermark_col",
+				"type": "varchar"
+			},
+			{
+				"name": "last_watermark",
+				"type": "datetime2",
+				"scale": 7
+			},
+			{
+				"name": "is_enabled",
+				"type": "bit"
+			}
+		],
+		"typeProperties": {
+			"schema": "etl",
+			"table": "ingest_control"
+		}
+	},
+	"type": "Microsoft.DataFactory/factories/datasets"
+}
