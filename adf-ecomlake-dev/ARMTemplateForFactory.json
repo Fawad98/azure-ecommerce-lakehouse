@@ -37,7 +37,7 @@
 			"type": "Microsoft.DataFactory/factories/pipelines",
 			"apiVersion": "2018-06-01",
 			"properties": {
-				"description": "Metadata-driven ingestion: one parameterised pipeline reads etl.ingest_control and copies each enabled table from Azure SQL to bronze, using a watermark where one is configured.",
+				"description": "Metadata-driven ingestion from Azure SQL to bronze. One parameterised pipeline reads etl.ingest_control and copies each enabled table, using a watermark where configured. The watermark advances only after Get Metadata confirms files exist at the sink path, so a successful-but-misdirected copy cannot silently skip data. ADF does not permit If Condition activities nested inside another If Condition, so the verification gate lives in the Script activity's T-SQL rather than in a second branch.",
 				"activities": [
 					{
 						"name": "GetTableList",
@@ -205,11 +205,57 @@
 												]
 											},
 											{
-												"name": "UpdateWatermark",
-												"type": "Script",
+												"name": "VerifySinkIncremental",
+												"description": "Confirms files actually landed at the sink path. Copy success alone is not evidence: a misconfigured path succeeds while writing where nothing downstream reads.",
+												"type": "GetMetadata",
 												"dependsOn": [
 													{
 														"activity": "CopyIncremental",
+														"dependencyConditions": [
+															"Succeeded"
+														]
+													}
+												],
+												"policy": {
+													"timeout": "0.00:10:00",
+													"retry": 2,
+													"retryIntervalInSeconds": 30,
+													"secureOutput": false,
+													"secureInput": false
+												},
+												"userProperties": [],
+												"typeProperties": {
+													"dataset": {
+														"referenceName": "ds_adls_parquet",
+														"type": "DatasetReference",
+														"parameters": {
+															"folderPath": {
+																"value": "@concat('sqldb/', item().source_table, '/load_date=', formatDateTime(utcnow(), 'yyyy-MM-dd'))",
+																"type": "Expression"
+															}
+														}
+													},
+													"fieldList": [
+														"exists",
+														"childItems"
+													],
+													"storeSettings": {
+														"type": "AzureBlobFSReadSettings",
+														"recursive": true,
+														"enablePartitionDiscovery": false
+													},
+													"formatSettings": {
+														"type": "ParquetReadSettings"
+													}
+												}
+											},
+											{
+												"name": "UpdateWatermark",
+												"description": "The watermark is a commitment that data through time T is durably landed, so it advances only when sink verification passes. On failure the script throws, leaving the old watermark in place so the next run reprocesses the same window.",
+												"type": "Script",
+												"dependsOn": [
+													{
+														"activity": "VerifySinkIncremental",
 														"dependencyConditions": [
 															"Succeeded"
 														]
@@ -232,7 +278,7 @@
 														{
 															"type": "NonQuery",
 															"text": {
-																"value": "UPDATE etl.ingest_control SET last_watermark = '@{activity('GetNewWatermark').output.firstRow.new_wm}' WHERE source_table = '@{item().source_table}'",
+																"value": "IF '@{activity('VerifySinkIncremental').output.exists}' = 'True' AND @{length(activity('VerifySinkIncremental').output.childItems)} > 0\nBEGIN\n    UPDATE etl.ingest_control\n    SET last_watermark = '@{activity('GetNewWatermark').output.firstRow.new_wm}'\n    WHERE source_table = '@{item().source_table}';\nEND\nELSE\nBEGIN\n    THROW 50001, 'Sink verification failed - watermark held so the next run reprocesses this window', 1;\nEND",
 																"type": "Expression"
 															}
 														}
@@ -307,6 +353,51 @@
 														}
 													}
 												]
+											},
+											{
+												"name": "VerifySinkFull",
+												"description": "Confirms files actually landed at the sink path. Copy success alone is not evidence: a misconfigured path succeeds while writing where nothing downstream reads.",
+												"type": "GetMetadata",
+												"dependsOn": [
+													{
+														"activity": "CopyFullTable",
+														"dependencyConditions": [
+															"Succeeded"
+														]
+													}
+												],
+												"policy": {
+													"timeout": "0.00:10:00",
+													"retry": 2,
+													"retryIntervalInSeconds": 30,
+													"secureOutput": false,
+													"secureInput": false
+												},
+												"userProperties": [],
+												"typeProperties": {
+													"dataset": {
+														"referenceName": "ds_adls_parquet",
+														"type": "DatasetReference",
+														"parameters": {
+															"folderPath": {
+																"value": "@concat('sqldb/', item().source_table, '/load_date=', formatDateTime(utcnow(), 'yyyy-MM-dd'))",
+																"type": "Expression"
+															}
+														}
+													},
+													"fieldList": [
+														"exists",
+														"childItems"
+													],
+													"storeSettings": {
+														"type": "AzureBlobFSReadSettings",
+														"recursive": true,
+														"enablePartitionDiscovery": false
+													},
+													"formatSettings": {
+														"type": "ParquetReadSettings"
+													}
+												}
 											}
 										]
 									}
@@ -319,7 +410,7 @@
 					"elapsedTimeMetric": {}
 				},
 				"annotations": [],
-				"lastPublishTime": "2026-07-19T09:06:02Z"
+				"lastPublishTime": null
 			},
 			"dependsOn": [
 				"[concat(variables('factoryId'), '/datasets/ds_sql_control')]",
