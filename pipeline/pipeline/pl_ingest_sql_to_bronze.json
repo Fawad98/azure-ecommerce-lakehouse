@@ -1,7 +1,7 @@
 {
 	"name": "pl_ingest_sql_to_bronze",
 	"properties": {
-		"description": "Metadata-driven ingestion: one parameterised pipeline reads etl.ingest_control and copies each enabled table from Azure SQL to bronze, using a watermark where one is configured.",
+		"description": "Metadata-driven ingestion from Azure SQL to bronze. One parameterised pipeline reads etl.ingest_control and copies each enabled table, using a watermark where configured. The watermark only advances after a Get Metadata check confirms files exist at the sink path, so a successful-but-misdirected copy cannot silently skip data.",
 		"activities": [
 			{
 				"name": "GetTableList",
@@ -168,8 +168,8 @@
 										]
 									},
 									{
-										"name": "UpdateWatermark",
-										"type": "Script",
+										"name": "VerifySinkIncremental",
+										"type": "GetMetadata",
 										"dependsOn": [
 											{
 												"activity": "CopyIncremental",
@@ -186,21 +186,95 @@
 											"secureInput": false
 										},
 										"userProperties": [],
-										"linkedServiceName": {
-											"referenceName": "ls_azuresql",
-											"type": "LinkedServiceReference"
-										},
 										"typeProperties": {
-											"scripts": [
-												{
-													"type": "NonQuery",
-													"text": {
-														"value": "UPDATE etl.ingest_control SET last_watermark = '@{activity('GetNewWatermark').output.firstRow.new_wm}' WHERE source_table = '@{item().source_table}'",
+											"dataset": {
+												"referenceName": "ds_adls_parquet",
+												"type": "DatasetReference",
+												"parameters": {
+													"folderPath": {
+														"value": "@concat('sqldb/', item().source_table, '/load_date=', formatDateTime(utcnow(), 'yyyy-MM-dd'))",
 														"type": "Expression"
 													}
 												}
+											},
+											"fieldList": [
+												"exists",
+												"childItems"
 											],
-											"scriptBlockExecutionTimeout": "02:00:00"
+											"storeSettings": {
+												"type": "AzureBlobFSReadSettings",
+												"recursive": true,
+												"enablePartitionDiscovery": false
+											},
+											"formatSettings": {
+												"type": "ParquetReadSettings"
+											}
+										}
+									},
+									{
+										"name": "SinkVerified",
+										"description": "The watermark is a commitment that data through time T is durably landed. It must only advance once the sink path is confirmed to contain files - Copy activity success alone is not evidence, because a misconfigured sink path succeeds while writing somewhere downstream never reads.",
+										"type": "IfCondition",
+										"dependsOn": [
+											{
+												"activity": "VerifySinkIncremental",
+												"dependencyConditions": [
+													"Succeeded"
+												]
+											}
+										],
+										"userProperties": [],
+										"typeProperties": {
+											"expression": {
+												"value": "@and(activity('VerifySinkIncremental').output.exists, greater(length(activity('VerifySinkIncremental').output.childItems), 0))",
+												"type": "Expression"
+											},
+											"ifFalseActivities": [
+												{
+													"name": "FailWatermarkNotAdvanced",
+													"type": "Fail",
+													"dependsOn": [],
+													"userProperties": [],
+													"typeProperties": {
+														"message": {
+															"value": "@concat('Incremental load for ', item().source_table, ' wrote no files to the expected sink path. Watermark deliberately NOT advanced so the next run reprocesses this window.')",
+															"type": "Expression"
+														},
+														"errorCode": "SINK_EMPTY_WATERMARK_HELD"
+													}
+												}
+											],
+											"ifTrueActivities": [
+												{
+													"name": "UpdateWatermark",
+													"type": "Script",
+													"dependsOn": [],
+													"policy": {
+														"timeout": "0.00:10:00",
+														"retry": 2,
+														"retryIntervalInSeconds": 30,
+														"secureOutput": false,
+														"secureInput": false
+													},
+													"userProperties": [],
+													"linkedServiceName": {
+														"referenceName": "ls_azuresql",
+														"type": "LinkedServiceReference"
+													},
+													"typeProperties": {
+														"scripts": [
+															{
+																"type": "NonQuery",
+																"text": {
+																	"value": "UPDATE etl.ingest_control SET last_watermark = '@{activity('GetNewWatermark').output.firstRow.new_wm}' WHERE source_table = '@{item().source_table}'",
+																	"type": "Expression"
+																}
+															}
+														],
+														"scriptBlockExecutionTimeout": "02:00:00"
+													}
+												}
+											]
 										}
 									}
 								],
@@ -270,6 +344,84 @@
 												}
 											}
 										]
+									},
+									{
+										"name": "VerifySinkFull",
+										"type": "GetMetadata",
+										"dependsOn": [
+											{
+												"activity": "CopyFullTable",
+												"dependencyConditions": [
+													"Succeeded"
+												]
+											}
+										],
+										"policy": {
+											"timeout": "0.00:10:00",
+											"retry": 2,
+											"retryIntervalInSeconds": 30,
+											"secureOutput": false,
+											"secureInput": false
+										},
+										"userProperties": [],
+										"typeProperties": {
+											"dataset": {
+												"referenceName": "ds_adls_parquet",
+												"type": "DatasetReference",
+												"parameters": {
+													"folderPath": {
+														"value": "@concat('sqldb/', item().source_table, '/load_date=', formatDateTime(utcnow(), 'yyyy-MM-dd'))",
+														"type": "Expression"
+													}
+												}
+											},
+											"fieldList": [
+												"exists",
+												"childItems"
+											],
+											"storeSettings": {
+												"type": "AzureBlobFSReadSettings",
+												"recursive": true,
+												"enablePartitionDiscovery": false
+											},
+											"formatSettings": {
+												"type": "ParquetReadSettings"
+											}
+										}
+									},
+									{
+										"name": "SinkHasDataFull",
+										"type": "IfCondition",
+										"dependsOn": [
+											{
+												"activity": "VerifySinkFull",
+												"dependencyConditions": [
+													"Succeeded"
+												]
+											}
+										],
+										"userProperties": [],
+										"typeProperties": {
+											"expression": {
+												"value": "@and(activity('VerifySinkFull').output.exists, greater(length(activity('VerifySinkFull').output.childItems), 0))",
+												"type": "Expression"
+											},
+											"ifFalseActivities": [
+												{
+													"name": "FailEmptySinkFull",
+													"type": "Fail",
+													"dependsOn": [],
+													"userProperties": [],
+													"typeProperties": {
+														"message": {
+															"value": "@concat('Full load for ', item().source_table, ' produced no files at the expected sink path. Data was not landed where downstream expects it.')",
+															"type": "Expression"
+														},
+														"errorCode": "SINK_EMPTY"
+													}
+												}
+											]
+										}
 									}
 								]
 							}
@@ -279,7 +431,7 @@
 			}
 		],
 		"annotations": [],
-		"lastPublishTime": "2026-07-19T09:06:02Z"
+		"lastPublishTime": null
 	},
 	"type": "Microsoft.DataFactory/factories/pipelines"
 }
