@@ -350,7 +350,8 @@
 						"folderPath": {
 							"value": "@dataset().folderPath",
 							"type": "Expression"
-						}
+						},
+						"fileSystem": "bronze"
 					},
 					"compressionCodec": "snappy"
 				},
