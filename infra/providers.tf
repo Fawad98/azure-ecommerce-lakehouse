@@ -1,5 +1,13 @@
 terraform {
   required_version = ">= 1.6"
+
+  backend "azurerm" {
+    resource_group_name  = "rg-tfstate"
+    storage_account_name = "sttfstatefawad98"
+    container_name       = "tfstate"
+    key                  = "ecomlake.tfstate"
+  }
+
   required_providers {
     azurerm = {
       source  = "hashicorp/azurerm"
