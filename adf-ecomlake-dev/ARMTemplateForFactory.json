@@ -33,6 +33,240 @@
 	},
 	"resources": [
 		{
+			"name": "[concat(parameters('factoryName'), '/pl_daily_batch')]",
+			"type": "Microsoft.DataFactory/factories/pipelines",
+			"apiVersion": "2018-06-01",
+			"properties": {
+				"activities": [
+					{
+						"name": "ingest_sql_to_bronze",
+						"description": "Ingesting data from SQL to bronze layer",
+						"type": "ExecutePipeline",
+						"dependsOn": [],
+						"policy": {
+							"secureInput": false
+						},
+						"userProperties": [],
+						"typeProperties": {
+							"pipeline": {
+								"referenceName": "pl_ingest_sql_to_bronze",
+								"type": "PipelineReference"
+							},
+							"waitOnCompletion": true,
+							"parameters": {}
+						}
+					},
+					{
+						"name": "bronze_to_silver",
+						"description": "Ingesting data from the bronze layer to silver layer",
+						"type": "DatabricksNotebook",
+						"dependsOn": [
+							{
+								"activity": "ingest_sql_to_bronze",
+								"dependencyConditions": [
+									"Succeeded"
+								]
+							}
+						],
+						"policy": {
+							"timeout": "00:30:00",
+							"retry": 1,
+							"retryIntervalInSeconds": 30,
+							"secureOutput": false,
+							"secureInput": false
+						},
+						"userProperties": [],
+						"typeProperties": {
+							"notebookPath": "/Users/fawad@alanecommercepack.onmicrosoft.com/azure-ecommerce-lakehouse/notebooks/02b_bronze_to_silver"
+						},
+						"linkedServiceName": {
+							"referenceName": "ls_databricks",
+							"type": "LinkedServiceReference"
+						}
+					},
+					{
+						"name": "sliver_to_gold_dims",
+						"type": "DatabricksNotebook",
+						"dependsOn": [
+							{
+								"activity": "bronze_to_silver",
+								"dependencyConditions": [
+									"Succeeded"
+								]
+							},
+							{
+								"activity": "streaming_bronze_to_silver",
+								"dependencyConditions": [
+									"Succeeded"
+								]
+							}
+						],
+						"policy": {
+							"timeout": "00:30:00",
+							"retry": 1,
+							"retryIntervalInSeconds": 30,
+							"secureOutput": false,
+							"secureInput": false
+						},
+						"userProperties": [],
+						"typeProperties": {
+							"notebookPath": "/Users/fawad@alanecommercepack.onmicrosoft.com/azure-ecommerce-lakehouse/notebooks/03_silver_to_gold_dims"
+						},
+						"linkedServiceName": {
+							"referenceName": "ls_databricks",
+							"type": "LinkedServiceReference"
+						}
+					},
+					{
+						"name": "silver_to_gold",
+						"description": "ingesting data from the silver layer to the gold layer",
+						"type": "DatabricksNotebook",
+						"dependsOn": [
+							{
+								"activity": "sliver_to_gold_dims",
+								"dependencyConditions": [
+									"Succeeded"
+								]
+							}
+						],
+						"policy": {
+							"timeout": "00:30:00",
+							"retry": 1,
+							"retryIntervalInSeconds": 30,
+							"secureOutput": false,
+							"secureInput": false
+						},
+						"userProperties": [],
+						"typeProperties": {
+							"notebookPath": "/Users/fawad@alanecommercepack.onmicrosoft.com/azure-ecommerce-lakehouse/notebooks/04_silver_to_gold_facts"
+						},
+						"linkedServiceName": {
+							"referenceName": "ls_databricks",
+							"type": "LinkedServiceReference"
+						}
+					},
+					{
+						"name": "data_quality_checks",
+						"description": "checking data quality in case any failures happen",
+						"type": "DatabricksNotebook",
+						"dependsOn": [
+							{
+								"activity": "silver_to_gold",
+								"dependencyConditions": [
+									"Succeeded"
+								]
+							}
+						],
+						"policy": {
+							"timeout": "00:30:00",
+							"retry": 1,
+							"retryIntervalInSeconds": 30,
+							"secureOutput": false,
+							"secureInput": false
+						},
+						"userProperties": [],
+						"typeProperties": {
+							"notebookPath": "/Users/fawad@alanecommercepack.onmicrosoft.com/azure-ecommerce-lakehouse/notebooks/05_data_quality_checks"
+						},
+						"linkedServiceName": {
+							"referenceName": "ls_databricks",
+							"type": "LinkedServiceReference"
+						}
+					},
+					{
+						"name": "bronze_streaming_ingest",
+						"type": "DatabricksNotebook",
+						"dependsOn": [],
+						"policy": {
+							"timeout": "00:30:00",
+							"retry": 1,
+							"retryIntervalInSeconds": 30,
+							"secureOutput": false,
+							"secureInput": false
+						},
+						"userProperties": [],
+						"typeProperties": {
+							"notebookPath": "/Users/fawad@alanecommercepack.onmicrosoft.com/azure-ecommerce-lakehouse/notebooks/01_bronze_streaming_ingest"
+						},
+						"linkedServiceName": {
+							"referenceName": "ls_databricks",
+							"type": "LinkedServiceReference"
+						}
+					},
+					{
+						"name": "streaming_bronze_to_silver",
+						"type": "DatabricksNotebook",
+						"dependsOn": [
+							{
+								"activity": "bronze_streaming_ingest",
+								"dependencyConditions": [
+									"Succeeded"
+								]
+							}
+						],
+						"policy": {
+							"timeout": "00:30:00",
+							"retry": 1,
+							"retryIntervalInSeconds": 30,
+							"secureOutput": false,
+							"secureInput": false
+						},
+						"userProperties": [],
+						"typeProperties": {
+							"notebookPath": "/Users/fawad@alanecommercepack.onmicrosoft.com/azure-ecommerce-lakehouse/notebooks/02_bronze_to_sliver"
+						},
+						"linkedServiceName": {
+							"referenceName": "ls_databricks",
+							"type": "LinkedServiceReference"
+						}
+					},
+					{
+						"name": "failure_alert",
+						"description": "This will send an email alert in case the pipeline fails",
+						"type": "WebActivity",
+						"dependsOn": [
+							{
+								"activity": "data_quality_checks",
+								"dependencyConditions": [
+									"Failed"
+								]
+							}
+						],
+						"policy": {
+							"timeout": "0.12:00:00",
+							"retry": 0,
+							"retryIntervalInSeconds": 30,
+							"secureOutput": false,
+							"secureInput": false
+						},
+						"userProperties": [],
+						"typeProperties": {
+							"method": "POST",
+							"headers": {
+								"Content-Type": {
+									"value": "application/json",
+									"type": "Expression"
+								}
+							},
+							"url": "https://prod-57.eastus2.logic.azure.com:443/workflows/16ad01a28c1d451bb730f901470cb2ef/triggers/When_an_HTTP_request_is_received/paths/invoke?api-version=2016-10-01&sp=%2Ftriggers%2FWhen_an_HTTP_request_is_received%2Frun&sv=1.0&sig=kslLfOzr9Rwv4lyROQDBch2itSBn4SNtGyOHySn6CA8",
+							"body": {
+								"value": "{\"pipeline\": \"@{pipeline().Pipeline}\", \"runId\": \"@{pipeline().RunId}\", \"message\": \"Data quality checks failed\"}",
+								"type": "Expression"
+							}
+						}
+					}
+				],
+				"policy": {
+					"elapsedTimeMetric": {}
+				},
+				"annotations": []
+			},
+			"dependsOn": [
+				"[concat(variables('factoryId'), '/pipelines/pl_ingest_sql_to_bronze')]",
+				"[concat(variables('factoryId'), '/linkedServices/ls_databricks')]"
+			]
+		},
+		{
 			"name": "[concat(parameters('factoryName'), '/pl_ingest_sql_to_bronze')]",
 			"type": "Microsoft.DataFactory/factories/pipelines",
 			"apiVersion": "2018-06-01",
@@ -562,253 +796,6 @@
 			]
 		},
 		{
-			"name": "[concat(parameters('factoryName'), '/ls_keyvault')]",
-			"type": "Microsoft.DataFactory/factories/linkedServices",
-			"apiVersion": "2018-06-01",
-			"properties": {
-				"annotations": [],
-				"type": "AzureKeyVault",
-				"typeProperties": {
-					"baseUrl": "[parameters('ls_keyvault_properties_typeProperties_baseUrl')]"
-				}
-			},
-			"dependsOn": []
-		},
-		{
-			"name": "[concat(parameters('factoryName'), '/pl_daily_batch')]",
-			"type": "Microsoft.DataFactory/factories/pipelines",
-			"apiVersion": "2018-06-01",
-			"properties": {
-				"activities": [
-					{
-						"name": "ingest_sql_to_bronze",
-						"description": "Ingesting data from SQL to bronze layer",
-						"type": "ExecutePipeline",
-						"dependsOn": [],
-						"policy": {
-							"secureInput": false
-						},
-						"userProperties": [],
-						"typeProperties": {
-							"pipeline": {
-								"referenceName": "pl_ingest_sql_to_bronze",
-								"type": "PipelineReference"
-							},
-							"waitOnCompletion": true,
-							"parameters": {}
-						}
-					},
-					{
-						"name": "bronze_to_silver",
-						"description": "Ingesting data from the bronze layer to silver layer",
-						"type": "DatabricksNotebook",
-						"dependsOn": [
-							{
-								"activity": "ingest_sql_to_bronze",
-								"dependencyConditions": [
-									"Succeeded"
-								]
-							}
-						],
-						"policy": {
-							"timeout": "00:30:00",
-							"retry": 1,
-							"retryIntervalInSeconds": 30,
-							"secureOutput": false,
-							"secureInput": false
-						},
-						"userProperties": [],
-						"typeProperties": {
-							"notebookPath": "/Users/fawad@alanecommercepack.onmicrosoft.com/azure-ecommerce-lakehouse/notebooks/02b_bronze_to_silver"
-						},
-						"linkedServiceName": {
-							"referenceName": "ls_databricks",
-							"type": "LinkedServiceReference"
-						}
-					},
-					{
-						"name": "sliver_to_gold_dims",
-						"type": "DatabricksNotebook",
-						"dependsOn": [
-							{
-								"activity": "bronze_to_silver",
-								"dependencyConditions": [
-									"Succeeded"
-								]
-							},
-							{
-								"activity": "streaming_bronze_to_silver",
-								"dependencyConditions": [
-									"Succeeded"
-								]
-							}
-						],
-						"policy": {
-							"timeout": "00:30:00",
-							"retry": 1,
-							"retryIntervalInSeconds": 30,
-							"secureOutput": false,
-							"secureInput": false
-						},
-						"userProperties": [],
-						"typeProperties": {
-							"notebookPath": "/Users/fawad@alanecommercepack.onmicrosoft.com/azure-ecommerce-lakehouse/notebooks/03_silver_to_gold_dims"
-						},
-						"linkedServiceName": {
-							"referenceName": "ls_databricks",
-							"type": "LinkedServiceReference"
-						}
-					},
-					{
-						"name": "silver_to_gold",
-						"description": "ingesting data from the silver layer to the gold layer",
-						"type": "DatabricksNotebook",
-						"dependsOn": [
-							{
-								"activity": "sliver_to_gold_dims",
-								"dependencyConditions": [
-									"Succeeded"
-								]
-							}
-						],
-						"policy": {
-							"timeout": "00:30:00",
-							"retry": 1,
-							"retryIntervalInSeconds": 30,
-							"secureOutput": false,
-							"secureInput": false
-						},
-						"userProperties": [],
-						"typeProperties": {
-							"notebookPath": "/Users/fawad@alanecommercepack.onmicrosoft.com/azure-ecommerce-lakehouse/notebooks/04_silver_to_gold_facts"
-						},
-						"linkedServiceName": {
-							"referenceName": "ls_databricks",
-							"type": "LinkedServiceReference"
-						}
-					},
-					{
-						"name": "data_quality_checks",
-						"description": "checking data quality in case any failures happen",
-						"type": "DatabricksNotebook",
-						"dependsOn": [
-							{
-								"activity": "silver_to_gold",
-								"dependencyConditions": [
-									"Succeeded"
-								]
-							}
-						],
-						"policy": {
-							"timeout": "00:30:00",
-							"retry": 1,
-							"retryIntervalInSeconds": 30,
-							"secureOutput": false,
-							"secureInput": false
-						},
-						"userProperties": [],
-						"typeProperties": {
-							"notebookPath": "/Users/fawad@alanecommercepack.onmicrosoft.com/azure-ecommerce-lakehouse/notebooks/05_data_quality_checks"
-						},
-						"linkedServiceName": {
-							"referenceName": "ls_databricks",
-							"type": "LinkedServiceReference"
-						}
-					},
-					{
-						"name": "bronze_streaming_ingest",
-						"type": "DatabricksNotebook",
-						"dependsOn": [],
-						"policy": {
-							"timeout": "00:30:00",
-							"retry": 1,
-							"retryIntervalInSeconds": 30,
-							"secureOutput": false,
-							"secureInput": false
-						},
-						"userProperties": [],
-						"typeProperties": {
-							"notebookPath": "/Users/fawad@alanecommercepack.onmicrosoft.com/azure-ecommerce-lakehouse/notebooks/01_bronze_streaming_ingest"
-						},
-						"linkedServiceName": {
-							"referenceName": "ls_databricks",
-							"type": "LinkedServiceReference"
-						}
-					},
-					{
-						"name": "streaming_bronze_to_silver",
-						"type": "DatabricksNotebook",
-						"dependsOn": [
-							{
-								"activity": "bronze_streaming_ingest",
-								"dependencyConditions": [
-									"Succeeded"
-								]
-							}
-						],
-						"policy": {
-							"timeout": "00:30:00",
-							"retry": 1,
-							"retryIntervalInSeconds": 30,
-							"secureOutput": false,
-							"secureInput": false
-						},
-						"userProperties": [],
-						"typeProperties": {
-							"notebookPath": "/Users/fawad@alanecommercepack.onmicrosoft.com/azure-ecommerce-lakehouse/notebooks/02_bronze_to_sliver"
-						},
-						"linkedServiceName": {
-							"referenceName": "ls_databricks",
-							"type": "LinkedServiceReference"
-						}
-					},
-					{
-						"name": "failure_alert",
-						"description": "This will send an email alert in case the pipeline fails",
-						"type": "WebActivity",
-						"dependsOn": [
-							{
-								"activity": "data_quality_checks",
-								"dependencyConditions": [
-									"Failed"
-								]
-							}
-						],
-						"policy": {
-							"timeout": "0.12:00:00",
-							"retry": 0,
-							"retryIntervalInSeconds": 30,
-							"secureOutput": false,
-							"secureInput": false
-						},
-						"userProperties": [],
-						"typeProperties": {
-							"method": "POST",
-							"headers": {
-								"Content-Type": {
-									"value": "application/json",
-									"type": "Expression"
-								}
-							},
-							"url": "https://prod-57.eastus2.logic.azure.com:443/workflows/16ad01a28c1d451bb730f901470cb2ef/triggers/When_an_HTTP_request_is_received/paths/invoke?api-version=2016-10-01&sp=%2Ftriggers%2FWhen_an_HTTP_request_is_received%2Frun&sv=1.0&sig=kslLfOzr9Rwv4lyROQDBch2itSBn4SNtGyOHySn6CA8",
-							"body": {
-								"value": "{\"pipeline\": \"@{pipeline().Pipeline}\", \"runId\": \"@{pipeline().RunId}\", \"message\": \"Data quality checks failed\"}",
-								"type": "Expression"
-							}
-						}
-					}
-				],
-				"policy": {
-					"elapsedTimeMetric": {}
-				},
-				"annotations": []
-			},
-			"dependsOn": [
-				"[concat(variables('factoryId'), '/pipelines/pl_ingest_sql_to_bronze')]",
-				"[concat(variables('factoryId'), '/linkedServices/ls_databricks')]"
-			]
-		},
-		{
 			"name": "[concat(parameters('factoryName'), '/ls_databricks')]",
 			"type": "Microsoft.DataFactory/factories/linkedServices",
 			"apiVersion": "2018-06-01",
@@ -827,6 +814,19 @@
 					"newClusterVersion": "15.4.x-scala2.12",
 					"clusterOption": "Fixed",
 					"newClusterInitScripts": []
+				}
+			},
+			"dependsOn": []
+		},
+		{
+			"name": "[concat(parameters('factoryName'), '/ls_keyvault')]",
+			"type": "Microsoft.DataFactory/factories/linkedServices",
+			"apiVersion": "2018-06-01",
+			"properties": {
+				"annotations": [],
+				"type": "AzureKeyVault",
+				"typeProperties": {
+					"baseUrl": "[parameters('ls_keyvault_properties_typeProperties_baseUrl')]"
 				}
 			},
 			"dependsOn": []
