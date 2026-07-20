@@ -1,0 +1,20 @@
+{
+	"name": "ls_databricks",
+	"properties": {
+		"annotations": [],
+		"type": "AzureDatabricks",
+		"typeProperties": {
+			"domain": "https://adb-7405614518721461.1.azuredatabricks.net",
+			"authentication": "MSI",
+			"workspaceResourceId": "/subscriptions/5ce9e687-f9f0-47dc-8805-77466025c2a9/resourceGroups/rg-ecomlake-dev/providers/Microsoft.Databricks/workspaces/dbx-ecomlake-dev",
+			"newClusterNodeType": "Standard_D4ds_v4",
+			"newClusterNumOfWorker": "1",
+			"newClusterSparkEnvVars": {
+				"PYSPARK_PYTHON": "/databricks/python3/bin/python3"
+			},
+			"newClusterVersion": "15.4.x-scala2.12",
+			"clusterOption": "Fixed",
+			"newClusterInitScripts": []
+		}
+	}
+}
