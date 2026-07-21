@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: pip install "pyspark==3.5.*" pytest ruff
+      - name: Lint
+        run: ruff check src/ tests/ data_generator/
+      - name: Unit tests
+        run: pytest tests/ -v
+
+  terraform:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - name: Format check
+        working-directory: infra
+        run: terraform fmt -check -recursive
+      - name: Validate
+        working-directory: infra
+        run: |
+          terraform init -backend=false
+          terraform validate
