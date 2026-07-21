@@ -1,0 +1,18 @@
+// Pipeline health over the last 7 days: run counts, failure counts, and average
+// duration per pipeline. Save this in Log Analytics and pin the result to a
+// dashboard, or screenshot it for the README.
+ADFPipelineRun
+| where TimeGenerated > ago(7d)
+| summarize
+    runs = count(),
+    failures = countif(Status == "Failed"),
+    avg_duration_min = avg(datetime_diff('minute', End, Start))
+    by PipelineName
+| extend failure_rate = round(100.0 * failures / runs, 1)
+| order by failures desc
+
+// --- Activity-level failures, for drilling into which step breaks ---
+// ADFActivityRun
+// | where TimeGenerated > ago(7d) and Status == "Failed"
+// | project TimeGenerated, PipelineName, ActivityName, ErrorMessage
+// | order by TimeGenerated desc
