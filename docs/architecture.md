@@ -22,7 +22,7 @@ All data lands in **Azure Data Lake Storage Gen2** as Delta tables, organized in
 **Azure Databricks** handles all transformations between layers (Bronze → Silver → Gold) using **PySpark** with **MERGE / SCD2** logic for incremental upserts and slowly changing dimensions.
 
 ### Serving
-**Azure Synapse Analytics (serverless SQL)** queries the Gold layer directly, exposing it to **Power BI** dashboards.
+**Databricks SQL Warehouse** queries the Gold layer directly, exposing it to **Power BI** dashboards.
 
 ## Platform (cross-cutting)
 
