@@ -10,8 +10,8 @@ resource "azurerm_storage_account" "lake" {
   resource_group_name      = azurerm_resource_group.rg.name
   location                 = var.location
   account_tier             = "Standard"
-  account_replication_type = "LRS"          # cheapest; fine for a portfolio
-  is_hns_enabled           = true           # THIS makes it ADLS Gen2
+  account_replication_type = "LRS" # cheapest; fine for a portfolio
+  is_hns_enabled           = true  # THIS makes it ADLS Gen2
   tags                     = local.tags
 }
 
@@ -26,7 +26,7 @@ resource "azurerm_eventhub_namespace" "ehns" {
   name                = "ehns-${local.prefix}"
   location            = var.location
   resource_group_name = azurerm_resource_group.rg.name
-  sku                 = "Standard"             # Basic is enough & cheap
+  sku                 = "Standard" # Basic is enough & cheap
   capacity            = 1
   tags                = local.tags
 }
@@ -39,32 +39,32 @@ resource "azurerm_eventhub" "clickstream" {
 }
 
 resource "azurerm_eventhub_authorization_rule" "send" {
-  name         = "simulator-send"
+  name                = "simulator-send"
   namespace_name      = azurerm_eventhub_namespace.ehns.name
   eventhub_name       = azurerm_eventhub.clickstream.name
   resource_group_name = azurerm_resource_group.rg.name
-  send = true
+  send                = true
 }
 
 resource "azurerm_eventhub_authorization_rule" "listen" {
-  name         = "databricks-listen"
+  name                = "databricks-listen"
   namespace_name      = azurerm_eventhub_namespace.ehns.name
   eventhub_name       = azurerm_eventhub.clickstream.name
   resource_group_name = azurerm_resource_group.rg.name
-  listen = true
+  listen              = true
 }
 
 # ---------- Key Vault ----------
 data "azurerm_client_config" "current" {}
 
 resource "azurerm_key_vault" "kv" {
-  name                = "kv-${local.prefix}"
-  location            = var.location
-  resource_group_name = azurerm_resource_group.rg.name
-  tenant_id           = data.azurerm_client_config.current.tenant_id
-  sku_name            = "standard"
+  name                       = "kv-${local.prefix}"
+  location                   = var.location
+  resource_group_name        = azurerm_resource_group.rg.name
+  tenant_id                  = data.azurerm_client_config.current.tenant_id
+  sku_name                   = "standard"
   rbac_authorization_enabled = true
-  tags                = local.tags
+  tags                       = local.tags
 }
 
 resource "azurerm_role_assignment" "kv_admin" {
@@ -87,13 +87,13 @@ resource "azurerm_mssql_server" "sql" {
   location                     = var.sql_location
   version                      = "12.0"
   administrator_login          = "lakeadmin"
-  administrator_login_password = var.sql_password   # pass via TF_VAR_sql_password
+  administrator_login_password = var.sql_password # pass via TF_VAR_sql_password
 }
 
 resource "azurerm_mssql_database" "olist" {
   name      = "olist"
   server_id = azurerm_mssql_server.sql.id
-  sku_name  = "Basic"            # ~$5/month
+  sku_name  = "Basic" # ~$5/month
 }
 
 resource "azurerm_mssql_firewall_rule" "azure_services" {
@@ -124,6 +124,6 @@ resource "azurerm_databricks_workspace" "dbx" {
   name                = "dbx-${local.prefix}"
   resource_group_name = azurerm_resource_group.rg.name
   location            = var.location
-  sku                 = "premium"   # needed for RBAC / Unity Catalog
+  sku                 = "premium" # needed for RBAC / Unity Catalog
   tags                = local.tags
 }

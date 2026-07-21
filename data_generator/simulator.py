@@ -1,4 +1,8 @@
-import json, random, time, uuid, os
+import json
+import random
+import time
+import uuid
+import os
 from datetime import datetime, timedelta, timezone
 from azure.eventhub import EventHubProducerClient, EventData
 
