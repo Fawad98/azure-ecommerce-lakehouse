@@ -10,7 +10,7 @@ An end-to-end data platform on Microsoft Azure that ingests **streaming clickstr
 
 ## Architecture
 
-![Architecture](docs/images/architecture.png)
+![Architecture](docs/images/architecture.gif)
 
 Two ingestion legs converge on a shared medallion lake:
 
