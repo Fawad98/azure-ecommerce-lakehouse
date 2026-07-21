@@ -216,3 +216,203 @@ of code into environment variables and Databricks secret scopes.
 **Lesson:** Adopt a redaction habit before pasting anything: scan for keys,
 passwords, and connection strings and replace them with placeholders. Error
 messages almost never require the secret itself to diagnose.
+
+## 12. Duplicate EntityPath in the Kafka JAAS configuration
+
+**Problem:** The reference code for the streaming consumer appended
+`;EntityPath=clickstream` to the Event Hubs connection string when building the
+Kafka JAAS config.
+
+**Diagnosis:** The Terraform authorization rule is scoped to the event hub
+rather than the namespace, so the connection string it produces *already* ends
+with `EntityPath=clickstream`. Appending it a second time produces a malformed
+JAAS string, and the resulting failure surfaces as a generic authentication or
+connection timeout — nothing in the error points at the duplicated parameter.
+
+**Fix:** Verified the suffix before use with
+`conn.endswith("EntityPath=clickstream")` and passed the connection string
+unmodified when the check returned true.
+
+**Lesson:** Connection strings differ depending on the scope of the
+authorization rule that generated them (namespace-level vs entity-level).
+Inspect the string's shape rather than assuming, and prefer a cheap assertion
+over debugging a misleading downstream error.
+
+## 13. Event Hubs Basic tier has no Kafka endpoint
+
+**Problem:** The Structured Streaming consumer could not connect to Event Hubs
+over the Kafka protocol.
+
+**Diagnosis:** The namespace had been provisioned with `sku = "Basic"`.
+The Kafka-compatible endpoint (port 9093) is a Standard-tier feature; on Basic
+it simply does not exist. The failure appears as a connection/authentication
+error rather than an explicit "feature not available" message, which makes the
+root cause non-obvious.
+
+**Fix:** Changed the tier to `Standard` in Terraform and re-applied, confirming
+from the plan that the namespace was updated in place rather than replaced
+(replacement would regenerate access keys and invalidate the connection string
+stored in Key Vault).
+
+**Lesson:** Service tiers gate protocols, not just throughput and quotas. When
+choosing a cheaper tier, check the feature matrix for the specific protocol the
+architecture depends on. The additional cost (roughly $22/month versus $11) is
+the price of Kafka-protocol compatibility, which in turn keeps the consumer code
+portable to a real Kafka cluster — a worthwhile trade documented in
+`design-decisions.md`.
+
+## 14. Terraform state lost with a deleted dev VM
+
+**Problem.** A development VM was deleted, taking its local `terraform.tfstate`
+with it. The infrastructure still existed in Azure, but Terraform no longer knew
+about any of it — `terraform plan` showed all 20 resources as "to add."
+
+**Diagnosis.** Local state is a single point of failure. Applying the plan would
+have tried to recreate resources that already existed, producing 409 conflicts.
+
+**Fix.** Reconciled 16 live resources into a fresh state with `terraform import`,
+parents before children (resource group → storage account → filesystems →
+namespaces → children). The stragglers (Key Vault secret, role assignments, SQL
+firewall rule) surfaced as 409s on the first apply and were imported individually.
+Then configured a remote `azurerm` backend and migrated state into it, so the
+failure mode cannot recur.
+
+**Lesson.** Remote state is not optional polish — it survives machine loss and is
+a prerequisite for CI/CD. The backend block must also be committed: a later fresh
+clone reverted to empty local state because the backend configuration existed only
+on the lost machine, never in the repo.
+
+## 15. Metadata-driven pipeline silently skipped tables not in the control table
+
+**Problem.** After the first successful ADF run, two source tables (`sellers`,
+`order_reviews`) had no data in bronze, yet the pipeline reported success.
+
+**Diagnosis.** Both tables were missing from `etl.ingest_control`. The ForEach only
+iterates the control table, so tables absent from it are never copied — and the
+pipeline still succeeds because it did everything it was told.
+
+**Fix.** Added the missing control rows. Re-ran; both tables landed.
+
+**Lesson.** "Pipeline succeeded" is not "data arrived." A metadata-driven design
+trades a code change for a data change, but the cost is that an omission in the
+metadata fails silently. This motivated the sink-verification and row-count checks.
+
+## 16. Watermark advanced on a misdirected copy, skipping ~99k rows
+
+**Problem.** After fixing an incorrect sink path, a re-run of the incremental copy
+returned almost no rows, and the silver referential-integrity assertion fired with
+112,650 orphaned order_items — because `orders` in bronze was nearly empty.
+
+**Diagnosis.** The first (misdirected) run had written orders to the wrong path but
+still advanced the watermark to the latest `order_purchase_timestamp`, because the
+watermark update depended on Copy *success*, not on verified landing. The corrected
+run then queried for rows after that advanced watermark and correctly found none.
+
+**Fix.** Reset the watermark, and restructured the pipeline so a Get Metadata
+activity verifies files exist at the sink before the watermark update commits. The
+update throws on failure, holding the watermark so the next run reprocesses.
+
+**Lesson.** State that records progress must only advance after the effect it
+describes is verified, not after the operation that intends it returns success.
+
+## 17. ADF forbids nested If Condition activities
+
+**Problem.** The sink-verification design placed an If Condition (advance watermark
+vs. fail) inside the existing full-load/incremental If Condition. ADF rejected it:
+"If Condition activity is not allowed under an If Condition Activity."
+
+**Diagnosis.** ADF does not permit control-flow activities (If, ForEach, Switch,
+Until) to be nested directly inside one another.
+
+**Fix.** Moved the verification gate out of a second If and into the Script
+activity's T-SQL: `IF exists AND childItems > 0 THEN update watermark ELSE THROW`.
+Same guarantee, no nested control flow.
+
+**Lesson.** ADF's control-flow nesting limits push conditional logic beyond one
+level into activity dependencies or into the activity's own payload.
+
+## 18. Quarantine ran correctly but its predicate omitted user_id
+
+**Problem.** The data-quality gate reported 636 null-`user_id` rows in silver, even
+though the quarantine mechanism was working.
+
+**Diagnosis.** The silver quality predicate checked `event_id`, `event_ts`,
+`event_type`, and `price` — but not `user_id`. So the ~3% injected null-user rows
+passed validation and landed in silver. The quarantine table was empty not because
+the split failed, but because nothing matched its (incomplete) condition.
+
+**Fix.** Added `user_id IS NOT NULL` to the predicate and reason codes to the
+quarantine output, then deleted silver/quarantine and their checkpoints and
+replayed from bronze.
+
+**Lesson.** A test of the mechanism ("does quarantine write work?") would have
+passed. What caught this was a downstream check asserting a *property of silver*.
+Test outcomes, not mechanisms.
+
+## 19. Streaming checkpoint bound to a deleted table's identity
+
+**Problem.** After deleting and recreating a silver table, a downstream streaming
+query failed: "The streaming query was reading from an unexpected Delta table
+(id = ...). It used to read from another Delta table (id = ...)."
+
+**Diagnosis.** A streaming checkpoint records the *identity* of its source table,
+not just its path. Recreating the table at the same path gives it a new table ID,
+which no longer matches the checkpoint.
+
+**Fix.** Deleted the downstream checkpoint (and its output table) so the stream
+reinitialised against the new table.
+
+**Lesson.** When a table is deleted and rebuilt, every checkpoint of every stream
+reading from it must be cleared too. Same principle as the watermark: state
+describing a relationship becomes invalid when one side is replaced.
+
+## 20. Job clusters denied access to Unity Catalog external locations
+
+**Problem.** The orchestrated pipeline failed where interactive runs succeeded:
+"User does not have READ FILES on External Location 'ext-checkpoints'."
+
+**Diagnosis.** Interactive and job compute run under different principals. The
+external-location grants made while setting up Unity Catalog applied to the
+interactive user, not to the identity the ADF-triggered job cluster runs as.
+
+**Fix.** Granted READ/WRITE FILES on all five external locations to the job's
+principal (to `account users` in this dev project).
+
+**Lesson.** A permission that passes interactively can fail in the orchestrated
+run because the principal differs — exactly the kind of gap only an end-to-end run
+surfaces.
+
+## 21. Pipeline "succeeded" while running an outdated notebook
+
+**Problem.** A full pipeline run completed green, but the gold layer was missing
+`dim_date` entirely and the unknown dimension member, causing a downstream
+data-quality failure.
+
+**Diagnosis.** The ADF notebook activity pointed at an older copy of notebook 03
+that predated those additions. It ran without error — it simply did less than the
+corrected version — so ADF reported success.
+
+**Fix.** Pointed the activity at the corrected notebook (committed in the Git
+folder) and re-ran.
+
+**Lesson.** Green status signals intent, not verified effect — the third instance
+of this principle in the project. Notebooks referenced by orchestration must be the
+same artifacts under version control, or "it worked when I ran it" and "the
+pipeline runs it" diverge.
+
+## 22. CI passed locally but failed on the runner (import + formatting)
+
+**Problem.** The first real CI run failed on two jobs: `ModuleNotFoundError: No
+module named 'src'` in the tests, and `terraform fmt -check` returning non-zero.
+
+**Diagnosis.** The tests passed locally because they were run from inside the
+project folder; the CI runner's working directory differed, so `from src...` did
+not resolve. Separately, the `.tf` files had never been run through `terraform
+fmt`.
+
+**Fix.** Added a `pytest.ini` with `pythonpath = .` so the repo root is on the
+path, and ran `terraform fmt -recursive`. Both jobs then passed.
+
+**Lesson.** CI is worth having precisely because it runs in a clean, different
+environment from the developer's — it caught an implicit-path assumption and
+unformatted IaC that local runs hid.
